@@ -305,6 +305,7 @@ class InputOutput:
         if self.output:
             self.pretty = False
 
+        self.show_fnames = True
         self.yes = yes
 
         self.input_history_file = input_history_file
@@ -333,7 +334,7 @@ class InputOutput:
         self.dry_run = dry_run
 
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        self.append_chat_history(f"\n# aider chat started at {current_time}\n\n")
+        self.append_chat_history(f"\n# composez chat started at {current_time}\n\n")
 
         self.prompt_session = None
         self.is_dumb_terminal = is_dumb_terminal()
@@ -1136,6 +1137,13 @@ class InputOutput:
                 self.chat_history_file = None  # Disable further attempts to write
 
     def format_files_for_input(self, rel_fnames, rel_read_only_fnames):
+        if not self.show_fnames:
+            return ""
+
+        formatter = getattr(self, "display_fnames_formatter", None)
+        if formatter:
+            rel_fnames, rel_read_only_fnames = formatter(rel_fnames, rel_read_only_fnames)
+
         if not self.pretty:
             read_only_files = []
             for full_path in sorted(rel_read_only_fnames or []):

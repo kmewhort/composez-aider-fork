@@ -74,6 +74,7 @@ class GitRepo:
         subtree_only=False,
         git_commit_verify=True,
         attribute_co_authored_by=False,  # Added parameter
+        git_root=None,
     ):
         self.io = io
         self.models = models
@@ -91,39 +92,44 @@ class GitRepo:
         self.git_commit_verify = git_commit_verify
         self.ignore_file_cache = {}
 
-        if git_dname:
-            check_fnames = [git_dname]
-        elif fnames:
-            check_fnames = fnames
+        if git_root:
+            # Caller already knows the repo root — skip discovery
+            self.repo = git.Repo(git_root, odbt=git.GitDB)
+            self.root = utils.safe_abs_path(self.repo.working_tree_dir)
         else:
-            check_fnames = ["."]
+            if git_dname:
+                check_fnames = [git_dname]
+            elif fnames:
+                check_fnames = fnames
+            else:
+                check_fnames = ["."]
 
-        repo_paths = []
-        for fname in check_fnames:
-            fname = Path(fname)
-            fname = fname.resolve()
+            repo_paths = []
+            for fname in check_fnames:
+                fname = Path(fname)
+                fname = fname.resolve()
 
-            if not fname.exists() and fname.parent.exists():
-                fname = fname.parent
+                if not fname.exists() and fname.parent.exists():
+                    fname = fname.parent
 
-            try:
-                repo_path = git.Repo(fname, search_parent_directories=True).working_dir
-                repo_path = utils.safe_abs_path(repo_path)
-                repo_paths.append(repo_path)
-            except ANY_GIT_ERROR:
-                pass
+                try:
+                    repo_path = git.Repo(fname, search_parent_directories=True).working_dir
+                    repo_path = utils.safe_abs_path(repo_path)
+                    repo_paths.append(repo_path)
+                except ANY_GIT_ERROR:
+                    pass
 
-        num_repos = len(set(repo_paths))
+            num_repos = len(set(repo_paths))
 
-        if num_repos == 0:
-            raise FileNotFoundError
-        if num_repos > 1:
-            self.io.tool_error("Files are in different git repos.")
-            raise FileNotFoundError
+            if num_repos == 0:
+                raise FileNotFoundError
+            if num_repos > 1:
+                self.io.tool_error("Files are in different git repos.")
+                raise FileNotFoundError
 
-        # https://github.com/gitpython-developers/GitPython/issues/427
-        self.repo = git.Repo(repo_paths.pop(), odbt=git.GitDB)
-        self.root = utils.safe_abs_path(self.repo.working_tree_dir)
+            # https://github.com/gitpython-developers/GitPython/issues/427
+            self.repo = git.Repo(repo_paths.pop(), odbt=git.GitDB)
+            self.root = utils.safe_abs_path(self.repo.working_tree_dir)
 
         if aider_ignore_file:
             self.aider_ignore_file = Path(aider_ignore_file)
@@ -270,7 +276,7 @@ class GitRepo:
             commit_message = "(no commit message provided)"
 
         if prefix_commit_message:
-            commit_message = "aider: " + commit_message
+            commit_message = "composez: " + commit_message
 
         full_commit_message = commit_message + commit_message_trailer
 
@@ -291,7 +297,7 @@ class GitRepo:
         original_user_name = self.repo.git.config("--get", "user.name")
         original_committer_name_env = os.environ.get("GIT_COMMITTER_NAME")
         original_author_name_env = os.environ.get("GIT_AUTHOR_NAME")
-        committer_name = f"{original_user_name} (aider)"
+        committer_name = f"{original_user_name} (composez)"
 
         try:
             # Use context managers to handle environment variables

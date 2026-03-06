@@ -129,15 +129,33 @@ class Coder:
         io=None,
         from_coder=None,
         summarize_from_coder=True,
+        autonomy=None,
         **kwargs,
     ):
         import aider.coders as coders
+        from .autonomy import get_strategy
+
+        # Track whether the caller explicitly passed a model so we know
+        # whether .composez role-based overrides should apply.
+        caller_set_model = main_model is not None
 
         if not main_model:
             if from_coder:
                 main_model = from_coder.main_model
             else:
                 main_model = models.Model(models.DEFAULT_MODEL_NAME)
+
+        # --- Resolve legacy edit_format values that encode autonomy ----
+        # "architect" and "agent" are autonomy wrappers, not true edit
+        # formats.  Map them to the underlying edit format + autonomy.
+        if edit_format == "architect":
+            if autonomy is None:
+                autonomy = "compose"
+            edit_format = None  # fall through to model default
+        elif edit_format == "agent":
+            if autonomy is None:
+                autonomy = "agent"
+            edit_format = None  # fall through to inherit / model default
 
         if edit_format == "code":
             edit_format = None
@@ -146,6 +164,24 @@ class Coder:
                 edit_format = from_coder.edit_format
             else:
                 edit_format = main_model.edit_format
+
+        # Default autonomy: inherit from the source coder, else "direct".
+        if autonomy is None:
+            if from_coder and hasattr(from_coder, "autonomy_strategy"):
+                autonomy = from_coder.autonomy_strategy.name
+            else:
+                autonomy = "direct"
+
+        # --- Task-specific model from .composez -----------------------
+        # When the caller didn't explicitly set a model, check .composez
+        # for a role-specific model override based on edit_format and
+        # autonomy level.
+        if not caller_set_model:
+            resolved = self._resolve_composez_model(
+                edit_format, autonomy, from_coder, kwargs.get("root")
+            )
+            if resolved is not None:
+                main_model = resolved
 
         if not io and from_coder:
             io = from_coder.io
@@ -191,6 +227,54 @@ class Coder:
             if hasattr(coder, "edit_format") and coder.edit_format == edit_format:
                 res = coder(main_model, io, **kwargs)
                 res.original_kwargs = dict(kwargs)
+
+                # --- Attach autonomy strategy --------------------------
+                strategy = get_strategy(autonomy)
+                res.autonomy_strategy = strategy
+
+                # Compose and agent need ask-like prompts for their
+                # planning phase — override the coder's default prompts.
+                if autonomy == "compose":
+                    from .architect_prompts import ArchitectPrompts
+
+                    res.gpt_prompts = ArchitectPrompts()
+                elif autonomy == "agent":
+                    from .agent_prompts import AgentPrompts
+
+                    res.gpt_prompts = AgentPrompts()
+
+                # Carry over pluggable validators across coder switches
+                if from_coder and getattr(from_coder, "edit_path_validator", None):
+                    res.edit_path_validator = from_coder.edit_path_validator
+
+                # Carry over selection state when switching to/from selection mode
+                if from_coder and edit_format == "selection":
+                    for attr in ("selection_filename", "selection_range", "selection_text"):
+                        val = getattr(from_coder, attr, None)
+                        if val is not None:
+                            setattr(res, attr, val)
+
+                # Activate novel mode — this fork is novel-only.  Kept as a
+                # soft dependency so upstream merges stay easy.
+                try:
+                    from composez_core.novel_coder import (
+                        activate_novel_agent_mode,
+                        activate_novel_mode,
+                        activate_novel_query_mode,
+                    )
+
+                    if autonomy == "agent":
+                        activate_novel_agent_mode(res)
+                    elif edit_format == "query" and autonomy == "direct":
+                        activate_novel_query_mode(res)
+                    else:
+                        activate_novel_mode(res)
+                except ImportError:
+                    pass
+                except Exception as exc:
+                    if io:
+                        io.tool_warning(f"Novel mode activation failed: {exc}")
+
                 return res
 
         valid_formats = [
@@ -199,6 +283,48 @@ class Coder:
             if hasattr(c, "edit_format") and c.edit_format is not None
         ]
         raise UnknownEditFormat(edit_format, valid_formats)
+
+    @staticmethod
+    def _resolve_composez_model(edit_format, autonomy, from_coder, root=None):
+        """Return a :class:`~aider.models.Model` based on ``.composez`` role settings.
+
+        Maps the combination of *edit_format* and *autonomy* to one of the
+        six model roles (``admin_model``, ``query_model``, ``edit_model``,
+        ``selection_model``, ``compose_model``, ``agent_model``).
+
+        Returns ``None`` if no role-specific model is configured.
+        """
+        try:
+            from composez_core.config import resolve_model_for_role
+        except ImportError:
+            return None
+
+        # Determine project root
+        if not root:
+            if from_coder:
+                root = getattr(from_coder, "root", None)
+            if not root:
+                return None
+
+        # Map (edit_format, autonomy) → role name
+        if edit_format == "context":
+            role = "admin_model"
+        elif autonomy == "compose":
+            role = "compose_model"
+        elif autonomy == "agent":
+            role = "agent_model"
+        elif edit_format == "query":
+            role = "query_model"
+        elif edit_format == "selection":
+            role = "selection_model"
+        else:
+            role = "edit_model"
+
+        model_name = resolve_model_for_role(root, role)
+        if not model_name:
+            return None
+
+        return models.Model(model_name)
 
     def clone(self, **kwargs):
         new_coder = Coder.create(from_coder=self, **kwargs)
@@ -236,7 +362,8 @@ class Coder:
 
         lines.append(output)
 
-        if self.edit_format == "architect":
+        autonomy_name = getattr(getattr(self, "autonomy_strategy", None), "name", "direct")
+        if autonomy_name == "compose":
             output = (
                 f"Editor model: {main_model.editor_model.name} with"
                 f" {main_model.editor_edit_format} edit format"
@@ -247,17 +374,35 @@ class Coder:
             output = f"Weak model: {weak_model.name}"
             lines.append(output)
 
+        # Show configured task-specific models from .composez
+        try:
+            from composez_core.config import get_models
+
+            root = getattr(self, "root", None)
+            if root:
+                configured = get_models(root)
+                if configured:
+                    role_labels = {
+                        "admin_model": "Admin",
+                        "query_model": "Query",
+                        "edit_model": "Edit",
+                        "selection_model": "Selection",
+                        "compose_model": "Compose",
+                        "agent_model": "Agent",
+                    }
+                    parts = []
+                    for role, name in configured.items():
+                        label = role_labels.get(role, role)
+                        parts.append(f"{label}={name}")
+                    if parts:
+                        lines.append("Models: " + ", ".join(parts))
+        except ImportError:
+            pass
+
         # Repo
         if self.repo:
             rel_repo_dir = self.repo.get_rel_repo_dir()
-            num_files = len(self.repo.get_tracked_files())
-
-            lines.append(f"Git repo: {rel_repo_dir} with {num_files:,} files")
-            if num_files > 1000:
-                lines.append(
-                    "Warning: For large repos, consider using --subtree-only and .aiderignore"
-                )
-                lines.append(f"See: {urls.large_repos}")
+            lines.append(f"Git repo: {rel_repo_dir}")
         else:
             lines.append("Git repo: none")
 
@@ -316,6 +461,7 @@ class Coder:
         done_messages=None,
         restore_chat_history=False,
         auto_lint=True,
+        auto_context=None,
         auto_test=False,
         lint_cmds=None,
         test_cmd=None,
@@ -380,6 +526,7 @@ class Coder:
         self.chat_completion_call_hashes = []
         self.chat_completion_response_hashes = []
         self.need_commit_before_edits = set()
+        self.edit_path_validator = None  # callable(path) → error_str or None
 
         self.total_cost = total_cost
         self.total_tokens_sent = total_tokens_sent
@@ -390,6 +537,7 @@ class Coder:
         self.verbose = verbose
         self.abs_fnames = set()
         self.abs_read_only_fnames = set()
+        self.auto_create_fnames = set()
         self.add_gitignore_files = add_gitignore_files
 
         if cur_messages:
@@ -525,6 +673,7 @@ class Coder:
         # Linting and testing
         self.linter = Linter(root=self.root, encoding=io.encoding)
         self.auto_lint = auto_lint
+        self.auto_context = auto_context
         self.setup_lint_cmds(lint_cmds)
         self.lint_cmds = lint_cmds
         self.auto_test = auto_test
@@ -859,7 +1008,23 @@ class Coder:
     def run_stream(self, user_message):
         self.io.user_input(user_message)
         self.init_before_message()
-        yield from self.send_message(user_message)
+
+        message = user_message
+        while message:
+            self.reflected_message = None
+            yield from self.send_message(message)
+
+            if not self.reflected_message:
+                break
+
+            if self.num_reflections >= self.max_reflections:
+                self.io.tool_warning(
+                    f"Only {self.max_reflections} reflections allowed, stopping."
+                )
+                break
+
+            self.num_reflections += 1
+            message = self.reflected_message
 
     def init_before_message(self):
         self.aider_edited_files = set()
@@ -1219,9 +1384,32 @@ class Coder:
             shell_cmd_reminder=shell_cmd_reminder,
             go_ahead_tip=self.gpt_prompts.go_ahead_tip,
             language=language,
+            available_commands=self._get_available_commands_text(),
         )
 
         return prompt
+
+    def _get_available_commands_text(self):
+        """Build a plain-text command reference from the Commands registry.
+
+        Used to dynamically inject the full command list into agent prompts
+        via the ``{available_commands}`` placeholder.
+        """
+        if not self.commands:
+            return ""
+        commands = sorted(self.commands.get_commands())
+        if not commands:
+            return ""
+        pad = max(len(cmd) for cmd in commands)
+        lines = []
+        for cmd in commands:
+            method = self.commands._resolve_cmd_method(cmd[1:])
+            if method and method.__doc__:
+                desc = method.__doc__.strip().split("\n")[0]
+                lines.append(f"  {cmd:<{pad}}  {desc}")
+            else:
+                lines.append(f"  {cmd}")
+        return "\n".join(lines)
 
     def format_chat_chunks(self):
         self.choose_fence()
@@ -1596,7 +1784,7 @@ class Coder:
         if self.reflected_message:
             return
 
-        if edited and self.auto_lint:
+        if edited and self.auto_lint and self.edit_format not in ("query", "selection"):
             lint_errors = self.lint_edited(edited)
             self.auto_commit(edited, context="Ran the linter")
             self.lint_outcome = not lint_errors
@@ -1623,7 +1811,9 @@ class Coder:
                     return
 
     def reply_completed(self):
-        pass
+        strategy = getattr(self, "autonomy_strategy", None)
+        if strategy:
+            return strategy.reply_completed(self)
 
     def show_exhausted_error(self):
         output_tokens = 0
@@ -1767,13 +1957,18 @@ class Coder:
             return
 
         added_fnames = []
+        auto_add = getattr(self, "_auto_context_enabled", False) or getattr(
+            self, "auto_context", False
+        )
         group = ConfirmGroup(new_mentions)
         for rel_fname in sorted(new_mentions):
-            if self.io.confirm_ask(
+            if auto_add or self.io.confirm_ask(
                 "Add file to the chat?", subject=rel_fname, group=group, allow_never=True
             ):
                 self.add_rel_fname(rel_fname)
                 added_fnames.append(rel_fname)
+                if auto_add:
+                    self.io.tool_output(f"Auto-added {rel_fname} to the chat")
             else:
                 self.ignore_mentions.add(rel_fname)
 
@@ -2188,7 +2383,7 @@ class Coder:
         self.io.tool_output(f"Committing {path} before applying edits.")
         self.need_commit_before_edits.add(path)
 
-    def allowed_to_edit(self, path):
+    def allowed_to_edit(self, path, group=None):
         full_path = self.abs_root_path(path)
         if self.repo:
             need_to_add = not self.repo.path_in_repo(path)
@@ -2204,7 +2399,17 @@ class Coder:
             return
 
         if not Path(full_path).exists():
-            if not self.io.confirm_ask("Create new file?", subject=path):
+            # Auto-create files whose basename is in auto_create_fnames (e.g.
+            # SUMMARY.md, PROSE.md) without prompting the user.
+            basename = Path(path).name
+            if basename in self.auto_create_fnames:
+                auto_allow = True
+            else:
+                auto_allow = self.io.confirm_ask(
+                    "Create new file?", subject=path, group=group,
+                )
+
+            if not auto_allow:
                 self.io.tool_output(f"Skipping edits to {path}")
                 return
 
@@ -2226,6 +2431,7 @@ class Coder:
         if not self.io.confirm_ask(
             "Allow edits to file that has not been added to the chat?",
             subject=path,
+            group=group,
         ):
             self.io.tool_output(f"Skipping edits to {path}")
             return
@@ -2272,17 +2478,30 @@ class Coder:
 
         self.need_commit_before_edits = set()
 
+        # Build a ConfirmGroup so that multi-file prompts offer (A)ll/(S)kip all
+        from aider.io import ConfirmGroup
+
+        unique_paths = {edit[0] for edit in edits if edit[0]}
+        group = ConfirmGroup(unique_paths)
+
         for edit in edits:
             path = edit[0]
             if path is None:
                 res.append(edit)
                 continue
+
+            # Run the pluggable path validator (e.g. narrative file constraints)
+            if self.edit_path_validator and path:
+                violation = self.edit_path_validator(path)
+                if violation:
+                    raise ValueError(violation)
+
             if path == "python":
                 dump(edits)
             if path in seen:
                 allowed = seen[path]
             else:
-                allowed = self.allowed_to_edit(path)
+                allowed = self.allowed_to_edit(path, group=group)
                 seen[path] = allowed
 
             if allowed:

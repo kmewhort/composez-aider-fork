@@ -220,7 +220,7 @@ def start_openrouter_oauth_flow(io, analytics):
         io.tool_error("Please ensure a port in this range is free, or configure manually.")
         return None
 
-    callback_url = f"http://localhost:{port}/callback/aider"
+    callback_url = f"http://localhost:{port}/callback/composez"
     auth_code = None
     server_error = None
     server_started = threading.Event()
@@ -230,7 +230,7 @@ def start_openrouter_oauth_flow(io, analytics):
         def do_GET(self):
             nonlocal auth_code, server_error
             parsed_path = urlparse(self.path)
-            if parsed_path.path == "/callback/aider":
+            if parsed_path.path == "/callback/composez":
                 query_params = parse_qs(parsed_path.query)
                 if "code" in query_params:
                     auth_code = query_params["code"][0]
@@ -239,7 +239,7 @@ def start_openrouter_oauth_flow(io, analytics):
                     self.end_headers()
                     self.wfile.write(
                         b"<html><body><h1>Success!</h1>"
-                        b"<p>Aider has received the authentication code. "
+                        b"<p>Composez has received the authentication code. "
                         b"You can close this browser tab.</p></body></html>"
                     )
                     # Signal the main thread to shut down the server
@@ -308,7 +308,7 @@ def start_openrouter_oauth_flow(io, analytics):
     }
     auth_url = f"{auth_url_base}?{'&'.join(f'{k}={v}' for k, v in auth_params.items())}"
 
-    io.tool_output("\nPlease open this URL in your browser to connect Aider with OpenRouter:")
+    io.tool_output("\nPlease open this URL in your browser to connect Composez with OpenRouter:")
     io.tool_output()
     print(auth_url)
 
@@ -366,7 +366,7 @@ def start_openrouter_oauth_flow(io, analytics):
             with open(key_file, "a", encoding="utf-8") as f:
                 f.write(f'OPENROUTER_API_KEY="{api_key}"\n')
 
-            io.tool_warning("Aider will load the OpenRouter key automatically in future sessions.")
+            io.tool_warning("Composez will load the OpenRouter key automatically in future sessions.")
             io.tool_output()
 
             analytics.event("oauth_flow_success", provider="openrouter")

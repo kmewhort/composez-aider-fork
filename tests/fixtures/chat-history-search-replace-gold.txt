@@ -5505,7 +5505,7 @@ aider/coders/base_coder.py
             self.assertNotIn(fname2, str(coder.abs_fnames))
             self.assertNotIn(fname3, str(coder.abs_fnames))
 
-    def test_cmd_ask(self):
+    def test_cmd_query(self):
 @@@@@@@@@@@@@@@@@@@@
     def test_cmd_add_aiderignored_file(self):
         with GitTemporaryDirectory():
@@ -5569,7 +5569,7 @@ aider/coders/base_coder.py
             # Check if the file was removed from abs_read_only_fnames
             self.assertNotIn(str(test_file.resolve()), coder.abs_read_only_fnames)
 
-    def test_cmd_ask(self):
+    def test_cmd_query(self):
 @@@ REPLACE @@@@@@@@@@@@@@@@@@@@
 
 
@@ -9206,7 +9206,7 @@ class Coder:
         finally:
             os.unlink(external_file_path)
 
-    def test_cmd_ask(self):
+    def test_cmd_query(self):
         io = InputOutput(pretty=False, yes=True)
 @@@@@@@@@@@@@@@@@@@@
     def test_cmd_read_with_external_file(self):
@@ -9279,7 +9279,7 @@ class Coder:
             self.assertIn("-Initial content", diff_output)
             self.assertIn("+Modified content", diff_output)
 
-    def test_cmd_ask(self):
+    def test_cmd_query(self):
         io = InputOutput(pretty=False, yes=True)
 @@@ REPLACE @@@@@@@@@@@@@@@@@@@@
 
@@ -10169,7 +10169,7 @@ Both of these options are disabled by default, but can be useful for easily iden
 
 @@@ #### /test pytest tests/basic/test_commands.py @@@@@@@@@@@@@@@@@@@@
 @@@ SEARCH: tests/basic/test_commands.py @@@@@@@@@@@@@@@@@@@@
-    def test_cmd_ask(self):
+    def test_cmd_query(self):
         io = InputOutput(pretty=False, yes=True)
         coder = Coder.create(self.GPT35, None, io)
         commands = Commands(io, coder)
@@ -10180,7 +10180,7 @@ Both of these options are disabled by default, but can be useful for easily iden
         with mock.patch("aider.coders.Coder.run") as mock_run:
             mock_run.return_value = canned_reply
 
-            commands.cmd_ask(question)
+            commands.cmd_query(question)
 
             mock_run.assert_called_once()
             mock_run.assert_called_once_with(question)
@@ -10191,7 +10191,7 @@ Both of these options are disabled by default, but can be useful for easily iden
             self.assertEqual(coder.cur_messages[1]["role"], "assistant")
             self.assertEqual(coder.cur_messages[1]["content"], canned_reply)
 @@@@@@@@@@@@@@@@@@@@
-    def test_cmd_ask(self):
+    def test_cmd_query(self):
         io = InputOutput(pretty=False, yes=True)
         coder = Coder.create(self.GPT35, None, io)
         commands = Commands(io, coder)
@@ -10205,7 +10205,7 @@ Both of these options are disabled by default, but can be useful for easily iden
             mock_create.return_value = coder
 
             with self.assertRaises(SwitchCoder) as context:
-                commands.cmd_ask(question)
+                commands.cmd_query(question)
 
             mock_run.assert_called_once_with(question)
             
@@ -10262,7 +10262,7 @@ from aider.utils import ChdirTemporaryDirectory, GitTemporaryDirectory, make_rep
 @@@ #### /test pytest tests/basic/test_commands.py @@@@@@@@@@@@@@@@@@@@
 @@@ SEARCH: tests/basic/test_commands.py @@@@@@@@@@@@@@@@@@@@
         with self.assertRaises(SwitchCoder) as context:
-            commands.cmd_ask(question)
+            commands.cmd_query(question)
 
         mock_run.assert_called_once_with(question)
 
@@ -10276,7 +10276,7 @@ from aider.utils import ChdirTemporaryDirectory, GitTemporaryDirectory, make_rep
     # due to the SwitchCoder exception being raised
 @@@@@@@@@@@@@@@@@@@@
         with self.assertRaises(SwitchCoder) as context:
-            commands.cmd_ask(question)
+            commands.cmd_query(question)
 
         mock_run.assert_called_once_with(question)
 
@@ -10292,7 +10292,7 @@ from aider.utils import ChdirTemporaryDirectory, GitTemporaryDirectory, make_rep
 
 @@@ #### /run pytest tests/basic/test_commands.py @@@@@@@@@@@@@@@@@@@@
 @@@ SEARCH: tests/basic/test_commands.py @@@@@@@@@@@@@@@@@@@@
-    def test_cmd_ask(self):
+    def test_cmd_query(self):
         io = InputOutput(pretty=False, yes=True)
         coder = Coder.create(self.GPT35, None, io)
         commands = Commands(io, coder)
@@ -10303,7 +10303,7 @@ from aider.utils import ChdirTemporaryDirectory, GitTemporaryDirectory, make_rep
         with mock.patch("aider.coders.Coder.run") as mock_run:
             mock_run.return_value = canned_reply
 
-            commands.cmd_ask(question)
+            commands.cmd_query(question)
 
             mock_run.assert_called_once()
             mock_run.assert_called_once_with(question)
@@ -10314,7 +10314,7 @@ from aider.utils import ChdirTemporaryDirectory, GitTemporaryDirectory, make_rep
             self.assertEqual(coder.cur_messages[1]["role"], "assistant")
             self.assertEqual(coder.cur_messages[1]["content"], canned_reply)
 @@@@@@@@@@@@@@@@@@@@
-    def test_cmd_ask(self):
+    def test_cmd_query(self):
         io = InputOutput(pretty=False, yes=True)
         coder = Coder.create(self.GPT35, None, io)
         commands = Commands(io, coder)
@@ -10326,7 +10326,7 @@ from aider.utils import ChdirTemporaryDirectory, GitTemporaryDirectory, make_rep
             mock_run.return_value = canned_reply
 
             with self.assertRaises(SwitchCoder):
-                commands.cmd_ask(question)
+                commands.cmd_query(question)
 
             mock_run.assert_called_once()
             mock_run.assert_called_once_with(question)
@@ -10550,7 +10550,7 @@ from aider import models, prompts, voice
 
 @@@ #### add a /code command, which is like /ask, but switches uses edit_format "code" @@@@@@@@@@@@@@@@@@@@
 @@@ SEARCH: aider/commands.py @@@@@@@@@@@@@@@@@@@@
-    def cmd_ask(self, args):
+    def cmd_query(self, args):
         "Ask questions about the code base without editing any files"
 
         if not args.strip():
@@ -10578,7 +10578,7 @@ from aider import models, prompts, voice
 
     def get_help_md(self):
 @@@@@@@@@@@@@@@@@@@@
-    def cmd_ask(self, args):
+    def cmd_query(self, args):
         "Ask questions about the code base without editing any files"
         return self._generic_chat_command(args, "ask")
 

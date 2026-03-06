@@ -1333,7 +1333,7 @@ This command will print 'Hello, World!' to the console."""
             io.confirm_ask = MagicMock(return_value=True)
 
             # Create an ArchitectCoder with auto_accept_architect=True
-            with patch("aider.coders.architect_coder.AskCoder.__init__", return_value=None):
+            with patch("aider.coders.architect_coder.QueryCoder.__init__", return_value=None):
                 from aider.coders.architect_coder import ArchitectCoder
 
                 coder = ArchitectCoder()
@@ -1368,7 +1368,7 @@ This command will print 'Hello, World!' to the console."""
             io.confirm_ask = MagicMock(return_value=True)
 
             # Create an ArchitectCoder with auto_accept_architect=False
-            with patch("aider.coders.architect_coder.AskCoder.__init__", return_value=None):
+            with patch("aider.coders.architect_coder.QueryCoder.__init__", return_value=None):
                 from aider.coders.architect_coder import ArchitectCoder
 
                 coder = ArchitectCoder()
@@ -1407,7 +1407,7 @@ This command will print 'Hello, World!' to the console."""
             io.confirm_ask = MagicMock(return_value=False)
 
             # Create an ArchitectCoder with auto_accept_architect=False
-            with patch("aider.coders.architect_coder.AskCoder.__init__", return_value=None):
+            with patch("aider.coders.architect_coder.QueryCoder.__init__", return_value=None):
                 from aider.coders.architect_coder import ArchitectCoder
 
                 coder = ArchitectCoder()

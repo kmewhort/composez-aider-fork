@@ -9,7 +9,7 @@ from pathspec.patterns import GitWildMatchPattern
 from watchfiles import watch
 
 from aider.dump import dump  # noqa
-from aider.watch_prompts import watch_ask_prompt, watch_code_prompt
+from aider.watch_prompts import watch_query_prompt, watch_code_prompt
 
 
 def load_gitignores(gitignore_paths: list[Path]) -> Optional[PathSpec]:
@@ -213,7 +213,7 @@ class FileWatcher:
         if has_action == "!":
             res = watch_code_prompt
         elif has_action == "?":
-            res = watch_ask_prompt
+            res = watch_query_prompt
 
         # Refresh all AI comments from tracked files
         for fname in self.coder.abs_fnames:

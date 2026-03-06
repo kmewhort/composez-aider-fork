@@ -1,9 +1,9 @@
 from .architect_prompts import ArchitectPrompts
-from .ask_coder import AskCoder
+from .query_coder import QueryCoder
 from .base_coder import Coder
 
 
-class ArchitectCoder(AskCoder):
+class ArchitectCoder(QueryCoder):
     edit_format = "architect"
     gpt_prompts = ArchitectPrompts()
     auto_accept_architect = False

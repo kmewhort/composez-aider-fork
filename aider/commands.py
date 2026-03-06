@@ -16,7 +16,6 @@ from prompt_toolkit.document import Document
 from aider import models, prompts, voice
 from aider.editor import pipe_editor
 from aider.format_settings import format_settings
-from aider.help import Help, install_help_extra
 from aider.io import CommandCompletionException
 from aider.llm import litellm
 from aider.repo import ANY_GIT_ERROR
@@ -78,11 +77,12 @@ class Commands:
         self.voice_format = voice_format
         self.voice_input_device = voice_input_device
 
-        self.help = None
         self.editor = editor
 
         # Store the original read-only filenames provided via args.read
         self.original_read_only_fnames = set(original_read_only_fnames or [])
+
+        self._novel_commands = None
 
     def cmd_model(self, args):
         "Switch the Main Model to a new LLM"
@@ -139,6 +139,7 @@ class Commands:
         "Switch to a new chat mode"
 
         from aider import coders
+        from aider.coders.autonomy import AUTONOMY_LEVELS
 
         ef = args.strip()
         valid_formats = OrderedDict(
@@ -152,53 +153,111 @@ class Commands:
             )
         )
 
-        show_formats = OrderedDict(
+        # --- Edit modes (what kind of output the LLM produces) ----------
+        show_edit_modes = OrderedDict(
             [
-                ("help", "Get help about using aider (usage, config, troubleshoot)."),
-                ("ask", "Ask questions about your code without making any changes."),
-                ("code", "Ask for changes to your code (using the best edit format)."),
+                ("help", "Show available commands."),
+                ("query", "Query the manuscript without making any changes."),
+                ("edit", "Ask for changes to your manuscript (using the best edit format)."),
                 (
-                    "architect",
-                    (
-                        "Work with an architect model to design code changes, and an editor to make"
-                        " them."
-                    ),
-                ),
-                (
-                    "context",
-                    "Automatically identify which files will need to be edited.",
+                    "selection",
+                    "Edit a selected range of text (use /select to set the selection).",
                 ),
             ]
         )
 
-        if ef not in valid_formats and ef not in show_formats:
+        # --- Autonomy levels (orchestration pattern) ---------------------
+        show_autonomy = OrderedDict(
+            [
+                ("direct", "Single turn — one prompt, one response."),
+                (
+                    "compose",
+                    (
+                        "Work with a compose model to design changes, and an editor to make"
+                        " them."
+                    ),
+                ),
+                (
+                    "agent",
+                    "Plan and execute multi-step tasks using an orchestrating agent.",
+                ),
+            ]
+        )
+
+        # Accept old names as aliases
+        aliases = {"code": "edit", "architect": "compose"}
+        ef = aliases.get(ef, ef)
+
+        all_valid = (
+            set(valid_formats)
+            | set(show_edit_modes)
+            | set(show_autonomy)
+            | set(AUTONOMY_LEVELS)
+        )
+        if ef not in all_valid:
             if ef:
                 self.io.tool_error(f'Chat mode "{ef}" should be one of these:\n')
             else:
                 self.io.tool_output("Chat mode should be one of these:\n")
 
-            max_format_length = max(len(format) for format in valid_formats.keys())
-            for format, description in show_formats.items():
-                self.io.tool_output(f"- {format:<{max_format_length}} : {description}")
+            self.io.tool_output("Edit modes:\n")
+            max_len = max(
+                len(k)
+                for k in list(show_edit_modes.keys()) + list(show_autonomy.keys())
+            )
+            for fmt, description in show_edit_modes.items():
+                self.io.tool_output(f"  {fmt:<{max_len}} : {description}")
+
+            self.io.tool_output("\nAutonomy levels:\n")
+            for fmt, description in show_autonomy.items():
+                self.io.tool_output(f"  {fmt:<{max_len}} : {description}")
 
             self.io.tool_output("\nOr a valid edit format:\n")
-            for format, description in valid_formats.items():
-                if format not in show_formats:
-                    self.io.tool_output(f"- {format:<{max_format_length}} : {description}")
+            hidden = (
+                set(show_edit_modes)
+                | set(show_autonomy)
+                | set(aliases.values())
+                | set(aliases.keys())
+                | {"architect", "agent", "context"}
+            )
+            for fmt, description in valid_formats.items():
+                if fmt not in hidden:
+                    self.io.tool_output(f"  {fmt:<{max_len}} : {description}")
 
             return
 
         summarize_from_coder = True
         edit_format = ef
+        autonomy = None  # None = inherit from current coder
 
-        if ef == "code":
+        if ef in ("edit", "code"):
             edit_format = self.coder.main_model.edit_format
             summarize_from_coder = False
-        elif ef == "ask":
+        elif ef == "compose":
+            # Compose is an autonomy level, keep the current edit format
+            autonomy = "compose"
+            edit_format = None  # inherit
+            summarize_from_coder = True
+        elif ef == "direct":
+            autonomy = "direct"
+            edit_format = None
+            summarize_from_coder = False
+        elif ef == "query":
+            summarize_from_coder = False
+            autonomy = "direct"
+        elif ef == "selection":
+            summarize_from_coder = False
+            autonomy = "direct"
+        elif ef == "agent":
+            # Agent is an autonomy level — keep the current edit format
+            # so that e.g. selection context is visible to the planner.
+            autonomy = "agent"
+            edit_format = None  # inherit
             summarize_from_coder = False
 
         raise SwitchCoder(
             edit_format=edit_format,
+            autonomy=autonomy,
             summarize_from_coder=summarize_from_coder,
         )
 
@@ -260,7 +319,12 @@ class Commands:
         cmd = cmd[1:]
         cmd = cmd.replace("-", "_")
 
-        raw_completer = getattr(self, f"completions_raw_{cmd}", None)
+        # Novel commands take priority over base commands
+        raw_completer = None
+        if self.novel_commands:
+            raw_completer = getattr(self.novel_commands, f"completions_raw_{cmd}", None)
+        if not raw_completer:
+            raw_completer = getattr(self, f"completions_raw_{cmd}", None)
         return raw_completer
 
     def get_completions(self, cmd):
@@ -268,10 +332,28 @@ class Commands:
         cmd = cmd[1:]
 
         cmd = cmd.replace("-", "_")
-        fun = getattr(self, f"completions_{cmd}", None)
+        # Novel commands take priority over base commands
+        fun = None
+        if self.novel_commands:
+            fun = getattr(self.novel_commands, f"completions_{cmd}", None)
+        if not fun:
+            fun = getattr(self, f"completions_{cmd}", None)
         if not fun:
             return
         return sorted(fun())
+
+    @property
+    def novel_commands(self):
+        if self._novel_commands is None:
+            try:
+                from composez_core import NovelCommands
+
+                self._novel_commands = NovelCommands(
+                    self.io, self.coder, parent_commands=self
+                )
+            except Exception:
+                self._novel_commands = False
+        return self._novel_commands
 
     def get_commands(self):
         commands = []
@@ -282,12 +364,29 @@ class Commands:
             cmd = cmd.replace("_", "-")
             commands.append("/" + cmd)
 
+        if self.novel_commands:
+            hidden = set()
+            if hasattr(self.novel_commands, "hidden_commands"):
+                hidden = self.novel_commands.hidden_commands()
+            for name in self.novel_commands.get_commands():
+                cmd = "/" + name
+                if cmd not in commands:
+                    commands.append(cmd)
+            commands = [c for c in commands if c not in hidden]
+
         return commands
 
     def do_run(self, cmd_name, args):
         cmd_name = cmd_name.replace("-", "_")
         cmd_method_name = f"cmd_{cmd_name}"
-        cmd_method = getattr(self, cmd_method_name, None)
+
+        # Novel commands take priority over base commands
+        cmd_method = None
+        if self.novel_commands:
+            cmd_method = getattr(self.novel_commands, cmd_method_name, None)
+        if not cmd_method:
+            cmd_method = getattr(self, cmd_method_name, None)
+
         if not cmd_method:
             self.io.tool_output(f"Error: Command {cmd_name} not found.")
             return
@@ -551,7 +650,7 @@ class Commands:
         self.io.tool_output(f"{cost_pad}{fmt(limit)} tokens max context window size")
 
     def cmd_undo(self, args):
-        "Undo the last git commit if it was done by aider"
+        "Undo the last git commit if it was done by composez"
         try:
             self.raw_cmd_undo(args)
         except ANY_GIT_ERROR as err:
@@ -571,7 +670,7 @@ class Commands:
         last_commit_message = self.coder.repo.get_head_commit_message("(unknown)").strip()
         last_commit_message = (last_commit_message.splitlines() or [""])[0]
         if last_commit_hash not in self.coder.aider_commit_hashes:
-            self.io.tool_error("The last commit was not made by aider in this chat session.")
+            self.io.tool_error("The last commit was not made by composez in this chat session.")
             self.io.tool_output(
                 "You could try `/git reset --hard HEAD^` but be aware that this is a destructive"
                 " command!"
@@ -797,7 +896,7 @@ class Commands:
         return res
 
     def cmd_add(self, args):
-        "Add files to the chat so aider can edit them or review them in detail"
+        "Add files to the chat so composez can edit them or review them in detail"
 
         all_matched_files = set()
 
@@ -809,7 +908,7 @@ class Commands:
                 fname = Path(self.coder.root) / word
 
             if self.coder.repo and self.coder.repo.ignored_file(fname):
-                self.io.tool_warning(f"Skipping {fname} due to aiderignore or --subtree-only.")
+                self.io.tool_warning(f"Skipping {fname} due to ignore rules or --subtree-only.")
                 continue
 
             if fname.exists():
@@ -1100,72 +1199,33 @@ class Commands:
         for file in chat_files:
             self.io.tool_output(f"  {file}")
 
+    def _resolve_cmd_method(self, cmd_name):
+        """Find the command method, checking novel commands first."""
+        cmd_method_name = f"cmd_{cmd_name}".replace("-", "_")
+        if self.novel_commands:
+            method = getattr(self.novel_commands, cmd_method_name, None)
+            if method:
+                return method
+        return getattr(self, cmd_method_name, None)
+
     def basic_help(self):
         commands = sorted(self.get_commands())
         pad = max(len(cmd) for cmd in commands)
         pad = "{cmd:" + str(pad) + "}"
         for cmd in commands:
-            cmd_method_name = f"cmd_{cmd[1:]}".replace("-", "_")
-            cmd_method = getattr(self, cmd_method_name, None)
+            cmd_method = self._resolve_cmd_method(cmd[1:])
             cmd = pad.format(cmd=cmd)
-            if cmd_method:
-                description = cmd_method.__doc__
+            if cmd_method and cmd_method.__doc__:
+                description = cmd_method.__doc__.strip().split("\n")[0]
                 self.io.tool_output(f"{cmd} {description}")
             else:
                 self.io.tool_output(f"{cmd} No description available.")
         self.io.tool_output()
-        self.io.tool_output("Use `/help <question>` to ask questions about how to use aider.")
 
     def cmd_help(self, args):
-        "Ask questions about aider"
+        "Show available commands"
 
-        if not args.strip():
-            self.basic_help()
-            return
-
-        self.coder.event("interactive help")
-        from aider.coders.base_coder import Coder
-
-        if not self.help:
-            res = install_help_extra(self.io)
-            if not res:
-                self.io.tool_error("Unable to initialize interactive help.")
-                return
-
-            self.help = Help()
-
-        coder = Coder.create(
-            io=self.io,
-            from_coder=self.coder,
-            edit_format="help",
-            summarize_from_coder=False,
-            map_tokens=512,
-            map_mul_no_files=1,
-        )
-        user_msg = self.help.ask(args)
-        user_msg += """
-# Announcement lines from when this session of aider was launched:
-
-"""
-        user_msg += "\n".join(self.coder.get_announcements()) + "\n"
-
-        coder.run(user_msg, preproc=False)
-
-        if self.coder.repo_map:
-            map_tokens = self.coder.repo_map.max_map_tokens
-            map_mul_no_files = self.coder.repo_map.map_mul_no_files
-        else:
-            map_tokens = 0
-            map_mul_no_files = 1
-
-        raise SwitchCoder(
-            edit_format=self.coder.edit_format,
-            summarize_from_coder=False,
-            from_coder=coder,
-            map_tokens=map_tokens,
-            map_mul_no_files=map_mul_no_files,
-            show_announcements=False,
-        )
+        self.basic_help()
 
     def completions_ask(self):
         raise CommandCompletionException()
@@ -1179,9 +1239,9 @@ class Commands:
     def completions_context(self):
         raise CommandCompletionException()
 
-    def cmd_ask(self, args):
-        """Ask questions about the code base without editing any files. If no prompt provided, switches to ask mode."""  # noqa
-        return self._generic_chat_command(args, "ask")
+    def cmd_query(self, args):
+        """Query the code base without editing any files. If no prompt provided, switches to query mode."""  # noqa
+        return self._generic_chat_command(args, "query")
 
     def cmd_code(self, args):
         """Ask for changes to your code. If no prompt provided, switches to code mode."""  # noqa
@@ -1230,10 +1290,9 @@ class Commands:
 """
         commands = sorted(self.get_commands())
         for cmd in commands:
-            cmd_method_name = f"cmd_{cmd[1:]}".replace("-", "_")
-            cmd_method = getattr(self, cmd_method_name, None)
-            if cmd_method:
-                description = cmd_method.__doc__
+            cmd_method = self._resolve_cmd_method(cmd[1:])
+            if cmd_method and cmd_method.__doc__:
+                description = cmd_method.__doc__.strip().split("\n")[0]
                 res += f"| **{cmd}** | {description} |\n"
             else:
                 res += f"| **{cmd}** | |\n"
@@ -1543,20 +1602,6 @@ class Commands:
             )
         except Exception as e:
             self.io.tool_error(f"An unexpected error occurred while copying to clipboard: {str(e)}")
-
-    def cmd_report(self, args):
-        "Report a problem by opening a GitHub Issue"
-        from aider.report import report_github_issue
-
-        announcements = "\n".join(self.coder.get_announcements())
-        issue_text = announcements
-
-        if args.strip():
-            title = args.strip()
-        else:
-            title = None
-
-        report_github_issue(issue_text, title=title, confirm=False)
 
     def cmd_editor(self, initial_content=""):
         "Open an editor to write a prompt"

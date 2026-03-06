@@ -34,7 +34,7 @@ def default_env_file(git_root):
 
 def get_parser(default_config_files, git_root):
     parser = configargparse.ArgumentParser(
-        description="aider is AI pair programming in your terminal",
+        description="composez is AI-assisted fiction writing in your terminal",
         add_config_file_help=True,
         default_config_files=default_config_files,
         config_file_parser_class=configargparse.YAMLConfigFileParser,
@@ -411,7 +411,7 @@ def get_parser(default_config_files, git_root):
         "--gitignore",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="Enable/disable adding .aider* to .gitignore (default: True)",
+        help="Enable/disable adding .aider* and .composez* to .gitignore (default: True)",
     )
     group.add_argument(
         "--add-gitignore-files",
@@ -453,8 +453,8 @@ def get_parser(default_config_files, git_root):
         action=argparse.BooleanOptionalAction,
         default=None,
         help=(
-            "Attribute aider code changes in the git author name (default: True). If explicitly set"
-            " to True, overrides --attribute-co-authored-by precedence."
+            "Attribute composez code changes in the git author name (default: True). If explicitly"
+            " set to True, overrides --attribute-co-authored-by precedence."
         ),
     )
     group.add_argument(
@@ -462,21 +462,21 @@ def get_parser(default_config_files, git_root):
         action=argparse.BooleanOptionalAction,
         default=None,
         help=(
-            "Attribute aider commits in the git committer name (default: True). If explicitly set"
-            " to True, overrides --attribute-co-authored-by precedence for aider edits."
+            "Attribute composez commits in the git committer name (default: True). If explicitly"
+            " set to True, overrides --attribute-co-authored-by precedence for composez edits."
         ),
     )
     group.add_argument(
         "--attribute-commit-message-author",
         action=argparse.BooleanOptionalAction,
         default=False,
-        help="Prefix commit messages with 'aider: ' if aider authored the changes (default: False)",
+        help="Prefix commit messages with 'composez: ' if composez authored the changes (default: False)",
     )
     group.add_argument(
         "--attribute-commit-message-committer",
         action=argparse.BooleanOptionalAction,
         default=False,
-        help="Prefix all commit messages with 'aider: ' (default: False)",
+        help="Prefix all commit messages with 'composez: ' (default: False)",
     )
     group.add_argument(
         "--attribute-co-authored-by",
@@ -546,6 +546,12 @@ def get_parser(default_config_files, git_root):
         help="Enable/disable automatic linting after changes (default: True)",
     )
     group.add_argument(
+        "--auto-context",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Enable/disable auto-context file identification (default: from .composez)",
+    )
+    group.add_argument(
         "--test-cmd",
         help="Specify command to run tests",
         default=[],
@@ -604,7 +610,7 @@ def get_parser(default_config_files, git_root):
     group.add_argument(
         "--check-update",
         action=argparse.BooleanOptionalAction,
-        help="Check for new aider versions on launch",
+        help="Check for new versions on launch (currently disabled)",
         default=True,
     )
     group.add_argument(
@@ -623,7 +629,7 @@ def get_parser(default_config_files, git_root):
         "--upgrade",
         "--update",
         action="store_true",
-        help="Upgrade aider to the latest version from PyPI",
+        help="Upgrade to the latest version from PyPI (currently disabled)",
         default=False,
     )
     group.add_argument(
@@ -657,14 +663,14 @@ def get_parser(default_config_files, git_root):
         "--gui",
         "--browser",
         action=argparse.BooleanOptionalAction,
-        help="Run aider in your browser (default: False)",
+        help="Run composez in your browser (default: False)",
         default=False,
     )
     group.add_argument(
         "--copy-paste",
         action=argparse.BooleanOptionalAction,
         default=False,
-        help="Enable automatic copy/paste of chat between aider and web UI (default: False)",
+        help="Enable automatic copy/paste of chat between composez and web UI (default: False)",
     )
     group.add_argument(
         "--apply",
@@ -816,6 +822,12 @@ def get_parser(default_config_files, git_root):
         help="Enable/disable fancy input with history and completion (default: True)",
     )
     group.add_argument(
+        "--show-fnames",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable/disable showing file names in the prompt (default: True)",
+    )
+    group.add_argument(
         "--multiline",
         action=argparse.BooleanOptionalAction,
         default=False,
@@ -857,7 +869,7 @@ def get_parser(default_config_files, git_root):
         choices=supported_shells_list,
         help=(
             "Print shell completion script for the specified SHELL and exit. Supported shells:"
-            f" {', '.join(supported_shells_list)}. Example: aider --shell-completions bash"
+            f" {', '.join(supported_shells_list)}. Example: composez --shell-completions bash"
         ),
     )
 
@@ -928,7 +940,7 @@ def main():
                 print(f"Supported shells are: {', '.join(shtab.SUPPORTED_SHELLS)}", file=sys.stderr)
                 sys.exit(1)
             parser = get_parser([], None)
-            parser.prog = "aider"  # Set the program name on the parser
+            parser.prog = "composez"  # Set the program name on the parser
             print(shtab.complete(parser, shell=shell))
         else:
             print("Error: Please specify a shell for completion.", file=sys.stderr)

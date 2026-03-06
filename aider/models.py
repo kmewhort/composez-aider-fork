@@ -12,9 +12,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional, Union
 
-import json5
+import re
 import yaml
-from PIL import Image
 
 from aider import __version__
 from aider.dump import dump  # noqa: F401
@@ -691,6 +690,8 @@ class Model(ModelSettings):
         :param fname: The filename of the image.
         :return: A tuple (width, height) representing the image size in pixels.
         """
+        from PIL import Image
+
         with Image.open(fname) as img:
             return img.size
 
@@ -1094,6 +1095,18 @@ def register_models(model_settings_fnames):
     return files_loaded
 
 
+def _parse_json5_fast(data):
+    """Parse JSON5 data using fast regex-strip + stdlib json, falling back to json5."""
+    try:
+        stripped = re.sub(r"^\s*//.*$", "", data, flags=re.MULTILINE)
+        stripped = re.sub(r",\s*([}\]])", r"\1", stripped)
+        return json.loads(stripped)
+    except (json.JSONDecodeError, ValueError):
+        import json5
+
+        return json5.loads(data)
+
+
 def register_litellm_models(model_fnames):
     files_loaded = []
     for model_fname in model_fnames:
@@ -1104,7 +1117,7 @@ def register_litellm_models(model_fnames):
             data = Path(model_fname).read_text()
             if not data.strip():
                 continue
-            model_def = json5.loads(data)
+            model_def = _parse_json5_fast(data)
             if not model_def:
                 continue
 

@@ -1,5 +1,4 @@
-from .architect_coder import ArchitectCoder
-from .ask_coder import AskCoder
+from .query_coder import QueryCoder
 from .base_coder import Coder
 from .context_coder import ContextCoder
 from .editblock_coder import EditBlockCoder
@@ -9,15 +8,21 @@ from .editor_editblock_coder import EditorEditBlockCoder
 from .editor_whole_coder import EditorWholeFileCoder
 from .help_coder import HelpCoder
 from .patch_coder import PatchCoder
+from .selection_coder import SelectionCoder
 from .udiff_coder import UnifiedDiffCoder
 from .udiff_simple import UnifiedDiffSimpleCoder
 from .wholefile_coder import WholeFileCoder
 
 # from .single_wholefile_func_coder import SingleWholeFileFunctionCoder
 
+# ArchitectCoder and AgentCoder are no longer registered as edit formats.
+# Their orchestration logic now lives in autonomy strategies
+# (aider.coders.autonomy).  The modules still exist for backward
+# compatibility but are not in __all__.
+
 __all__ = [
     HelpCoder,
-    AskCoder,
+    QueryCoder,
     Coder,
     EditBlockCoder,
     EditBlockFencedCoder,
@@ -26,9 +31,9 @@ __all__ = [
     UnifiedDiffCoder,
     UnifiedDiffSimpleCoder,
     #    SingleWholeFileFunctionCoder,
-    ArchitectCoder,
     EditorEditBlockCoder,
     EditorWholeFileCoder,
     EditorDiffFencedCoder,
     ContextCoder,
+    SelectionCoder,
 ]

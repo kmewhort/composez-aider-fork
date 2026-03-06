@@ -42,8 +42,6 @@ UPDATING_REPO_MAP_MESSAGE = "Updating repo map"
 class RepoMap:
     TAGS_CACHE_DIR = f".aider.tags.cache.v{CACHE_VERSION}"
 
-    warned_files = set()
-
     def __init__(
         self,
         map_tokens=1024,
@@ -409,12 +407,6 @@ class RepoMap:
                 file_ok = False
 
             if not file_ok:
-                if fname not in self.warned_files:
-                    self.io.tool_warning(f"Repo-map can't include {fname}")
-                    self.io.tool_output(
-                        "Has it been deleted from the file system but not from git?"
-                    )
-                    self.warned_files.add(fname)
                 continue
 
             # dump(fname)

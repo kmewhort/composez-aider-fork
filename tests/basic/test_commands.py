@@ -1806,7 +1806,7 @@ class TestCommands(TestCase):
         # Check that the edit format is updated to the new model's default
         self.assertEqual(context.exception.kwargs.get("edit_format"), "diff")
 
-    def test_cmd_ask(self):
+    def test_cmd_query(self):
         io = InputOutput(pretty=False, fancy_input=False, yes=True)
         coder = Coder.create(self.GPT35, None, io)
         commands = Commands(io, coder)
@@ -1818,7 +1818,7 @@ class TestCommands(TestCase):
             mock_run.return_value = canned_reply
 
             with self.assertRaises(SwitchCoder):
-                commands.cmd_ask(question)
+                commands.cmd_query(question)
 
             mock_run.assert_called_once()
             mock_run.assert_called_once_with(question)

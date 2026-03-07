@@ -1,7 +1,7 @@
 
 [project]
-name = "aider-chat"
-description = "Aider is AI pair programming in your terminal"
+name = "composez-aider-fork"
+description = "Composez aider fork to support pluggability and novel editing"
 readme = "README.md"
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -19,7 +19,7 @@ requires-python = ">=3.10,<3.13"
 dynamic = ["dependencies", "optional-dependencies", "version"]
 
 [project.urls]
-Homepage = "https://github.com/Aider-AI/aider"
+Homepage = "https://github.com/kmewhort/composez-aider-fork"
 
 [project.scripts]
 aider = "aider.main:main"

@@ -1044,6 +1044,19 @@ class Model(ModelSettings):
                 _hash, response = self.send_completion(**kwargs)
                 if not response or not hasattr(response, "choices") or not response.choices:
                     return None
+
+                # Accumulate token usage so callers can track costs
+                usage = getattr(response, "usage", None)
+                if usage:
+                    self.simple_send_tokens_sent = (
+                        getattr(self, "simple_send_tokens_sent", 0)
+                        + (getattr(usage, "prompt_tokens", 0) or 0)
+                    )
+                    self.simple_send_tokens_received = (
+                        getattr(self, "simple_send_tokens_received", 0)
+                        + (getattr(usage, "completion_tokens", 0) or 0)
+                    )
+
                 res = response.choices[0].message.content
                 from aider.reasoning_tags import remove_reasoning_content
 

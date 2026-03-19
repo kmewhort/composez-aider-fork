@@ -264,7 +264,8 @@ def parse_lint_cmds(lint_cmds, io):
 
 def generate_search_path_list(default_file, git_root, command_line_file):
     files = []
-    files.append(Path.home() / default_file)  # homedir
+    if not os.environ.get("COMPOSEZ_SKIP_HOME_CONFIG"):
+        files.append(Path.home() / default_file)  # homedir
     if git_root:
         files.append(Path(git_root) / default_file)  # git root
     files.append(default_file)
@@ -435,7 +436,11 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
         git_conf = Path(git_root) / conf_fname  # git root
         if git_conf not in default_config_files:
             default_config_files.append(git_conf)
-    default_config_files.append(Path.home() / conf_fname)  # homedir
+    # Skip the home-directory config when running as a composez worker.
+    # The server controls all credentials and model selection — the home
+    # config could leak a developer's personal keys or model aliases.
+    if not os.environ.get("COMPOSEZ_SKIP_HOME_CONFIG"):
+        default_config_files.append(Path.home() / conf_fname)  # homedir
     default_config_files = list(map(str, default_config_files))
 
 
@@ -767,6 +772,7 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
             alias, model = parts
             models.MODEL_ALIASES[alias.strip()] = model.strip()
 
+    _user_specified_model = bool(args.model)
     selected_model_name = select_default_model(args, io, analytics)
     if not selected_model_name:
         # Error message and analytics event are handled within select_default_model
@@ -998,6 +1004,7 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
             auto_copy_context=args.copy_paste,
             auto_accept_architect=args.auto_accept_architect,
             add_gitignore_files=args.add_gitignore_files,
+            caller_set_model=_user_specified_model,
         )
     except UnknownEditFormat as err:
         io.tool_error(str(err))

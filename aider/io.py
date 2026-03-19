@@ -986,8 +986,17 @@ class InputOutput:
             message = str(message).encode("ascii", errors="replace").decode("ascii")
             self.console.print(message, **style)
 
+    # Machine-readable prefix emitted by tool_error() in non-pretty mode
+    # (i.e. subprocess execution).  The agent orchestrator scans for this
+    # marker to detect command-level errors even when the subprocess exits 0.
+    CMD_ERROR_MARKER = "[CMD_ERR]"
+
     def tool_error(self, message="", strip=True):
         self.num_error_outputs += 1
+        # In non-pretty mode (subprocess), prefix with a machine-readable
+        # marker so the orchestrator can detect command-level errors.
+        if not self.pretty and message and message.strip():
+            message = f"{self.CMD_ERROR_MARKER} {message}"
         self._tool_message(message, strip, self.tool_error_color)
 
     def tool_warning(self, message="", strip=True):

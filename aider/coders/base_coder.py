@@ -4,6 +4,7 @@ import base64
 import hashlib
 import json
 import locale
+import logging
 import math
 import mimetypes
 import os
@@ -51,6 +52,8 @@ from aider.waiting import WaitingSpinner
 
 from ..dump import dump  # noqa: F401
 from .chat_chunks import ChatChunks
+
+_log = logging.getLogger("composez.base_coder")
 
 
 class UnknownEditFormat(ValueError):
@@ -130,6 +133,7 @@ class Coder:
         from_coder=None,
         summarize_from_coder=True,
         autonomy=None,
+        caller_set_model=None,
         **kwargs,
     ):
         import aider.coders as coders
@@ -137,7 +141,11 @@ class Coder:
 
         # Track whether the caller explicitly passed a model so we know
         # whether .composez role-based overrides should apply.
-        caller_set_model = main_model is not None
+        # When caller_set_model is explicitly passed (e.g. False for
+        # auto-selected models), use that value.  Otherwise infer from
+        # whether main_model was provided.
+        if caller_set_model is None:
+            caller_set_model = main_model is not None
 
         if not main_model:
             if from_coder:
@@ -227,6 +235,7 @@ class Coder:
             if hasattr(coder, "edit_format") and coder.edit_format == edit_format:
                 res = coder(main_model, io, **kwargs)
                 res.original_kwargs = dict(kwargs)
+                res._caller_set_model = caller_set_model
 
                 # --- Attach autonomy strategy --------------------------
                 strategy = get_strategy(autonomy)
@@ -1006,6 +1015,8 @@ class Coder:
         return {"role": "user", "content": image_messages}
 
     def run_stream(self, user_message):
+        _log.debug("[run_stream] start  format=%s  prompt=%r",
+                   self.edit_format, user_message[:80])
         self.io.user_input(user_message)
         self.init_before_message()
 
@@ -1024,7 +1035,15 @@ class Coder:
                 break
 
             self.num_reflections += 1
+            reason = self.reflected_message[:120]
+            _log.debug("[run_stream] reflection %d/%d  reason=%r",
+                       self.num_reflections, self.max_reflections, reason)
+            self.io.tool_output(
+                f"Reflecting ({self.num_reflections}/{self.max_reflections}): {reason}"
+            )
             message = self.reflected_message
+
+        _log.debug("[run_stream] done  reflections=%d", self.num_reflections)
 
     def init_before_message(self):
         self.aider_edited_files = set()
@@ -1106,17 +1125,66 @@ class Coder:
                 return
 
             self.num_reflections += 1
+            reason = self.reflected_message[:120]
+            _log.debug("[run_one] reflection %d/%d  reason=%r",
+                       self.num_reflections, self.max_reflections, reason)
+            self.io.tool_output(
+                f"Reflecting ({self.num_reflections}/{self.max_reflections}): {reason}"
+            )
             message = self.reflected_message
+
+    def _format_llm_error(self, exc, err_msg=None):
+        """Format LLM error detail string with status, provider, model, and body excerpt.
+
+        litellm exceptions fabricate a fake httpx.Response with no body,
+        so we can't rely on response.text.  Instead we use exc.message
+        which contains the actual upstream error (format:
+        ``litellm.XxxError: <upstream error>``).
+        """
+        status = getattr(exc, "status_code", None)
+        provider = getattr(exc, "llm_provider", None)
+        parts = []
+        if status:
+            parts.append(f"HTTP {status}")
+        if provider:
+            parts.append(f"provider={provider}")
+        model_name = getattr(self.main_model, "name", None) if hasattr(self, "main_model") else None
+        if model_name:
+            parts.append(f"model={model_name}")
+
+        # Extract the actual upstream error from the exception.
+        # exc.message = "litellm.InternalServerError: <actual error>"
+        # str(exc) adds retry noise we don't want.
+        detail = ""
+        raw_msg = getattr(exc, "message", "") or ""
+        if raw_msg:
+            # Strip the "litellm.XxxError: " prefix
+            if ": " in raw_msg:
+                detail = raw_msg.split(": ", 1)[1]
+            else:
+                detail = raw_msg
+        elif err_msg:
+            # Fallback to str(err)
+            if ": " in err_msg:
+                detail = err_msg.split(": ", 1)[1]
+            else:
+                detail = err_msg
+
+        if detail and detail not in ("None", ""):
+            parts.append(f"detail={detail[:300]}")
+
+        return " ".join(parts)
 
     def check_and_open_urls(self, exc, friendly_msg=None):
         """Check exception for URLs, offer to open in a browser, with user-friendly error msgs."""
         text = str(exc)
+        err_detail = self._format_llm_error(exc, text)
 
         if friendly_msg:
             self.io.tool_warning(text)
-            self.io.tool_error(f"{friendly_msg}")
+            self.io.tool_error(f"{friendly_msg} ({err_detail})")
         else:
-            self.io.tool_error(text)
+            self.io.tool_error(f"{err_detail}: {text}")
 
         # Exclude double quotes from the matched URL characters
         url_pattern = re.compile(r'(https?://[^\s/$.?#].[^\s"]*)')
@@ -1605,6 +1673,7 @@ class Coder:
         return True
 
     def send_message(self, inp):
+        self._send_t0 = time.monotonic()
         self.event("message_send_starting")
 
         # Notify IO that LLM processing is starting
@@ -1619,6 +1688,19 @@ class Coder:
         if not self.check_tokens(messages):
             return
         self.warm_cache(chunks)
+
+        # Log the outgoing LLM request summary
+        total_chars = sum(
+            len(m.get("content", "")) if isinstance(m.get("content"), str) else 0
+            for m in messages
+        )
+        _log.debug("[llm] sending request  model=%s  msgs=%d  chars=%d",
+                   self.main_model.name, len(messages), total_chars)
+        self.io.tool_output(
+            f"Sending to {self.main_model.name}: "
+            f"{len(messages)} messages, ~{total_chars} chars",
+            log_only=True,
+        )
 
         if self.verbose:
             utils.show_messages(messages, functions=self.functions)
@@ -1650,6 +1732,7 @@ class Coder:
                     ex_info = litellm_ex.get_ex_info(err)
 
                     if ex_info.name == "ContextWindowExceededError":
+                        self.io.tool_error(f"Context window exceeded for {self.main_model.name}")
                         exhausted = True
                         break
 
@@ -1664,12 +1747,17 @@ class Coder:
                         self.check_and_open_urls(err, ex_info.description)
                         break
 
+                    # Log detailed error info for debugging provider issues
                     err_msg = str(err)
+                    err_detail = self._format_llm_error(err, err_msg)
+
                     if ex_info.description:
                         self.io.tool_warning(err_msg)
-                        self.io.tool_error(ex_info.description)
+                        self.io.tool_error(
+                            f"{ex_info.description} ({err_detail})"
+                        )
                     else:
-                        self.io.tool_error(err_msg)
+                        self.io.tool_error(f"{err_detail}: {err_msg}")
 
                     self.io.tool_output(f"Retrying in {retry_delay:.1f} seconds...")
                     time.sleep(retry_delay)
@@ -1710,12 +1798,21 @@ class Coder:
             self.remove_reasoning_content()
             self.multi_response_content = ""
 
-        ###
-        # print()
-        # print("=" * 20)
-        # dump(self.partial_response_content)
+        _llm_elapsed = time.monotonic() - self._send_t0
 
         self.io.tool_output()
+
+        # Capture token counts before show_usage_report resets them
+        _prompt_tok = self.message_tokens_sent
+        _compl_tok = self.message_tokens_received
+        _tok_per_sec = (_compl_tok / _llm_elapsed) if (_llm_elapsed > 0 and _compl_tok) else 0
+        _log.debug("[llm] response complete  elapsed=%.1fs  chars=%d  "
+                   "prompt_tok=%d  completion_tok=%d  tok/s=%.1f",
+                   _llm_elapsed,
+                   len(self.partial_response_content or ""),
+                   _prompt_tok,
+                   _compl_tok,
+                   _tok_per_sec)
 
         self.show_usage_report()
 
@@ -1755,7 +1852,9 @@ class Coder:
                 return
 
             try:
+                _log.debug("[post-process] reply_completed check")
                 if self.reply_completed():
+                    _log.debug("[post-process] reply_completed handled (compose/agent)")
                     return
             except KeyboardInterrupt:
                 interrupted = True
@@ -1770,11 +1869,20 @@ class Coder:
             ]
             return
 
+        _log.debug("[post-process] applying edits")
+        _t_apply = time.monotonic()
         edited = self.apply_updates()
+        _log.debug("[post-process] edits applied  files=%d  elapsed=%.1fs",
+                   len(edited) if edited else 0,
+                   time.monotonic() - _t_apply)
 
         if edited:
             self.aider_edited_files.update(edited)
+            _log.debug("[post-process] auto-commit starting")
+            _t_commit = time.monotonic()
             saved_message = self.auto_commit(edited)
+            _log.debug("[post-process] auto-commit done  elapsed=%.1fs",
+                       time.monotonic() - _t_commit)
 
             if not saved_message and hasattr(self.gpt_prompts, "files_content_gpt_edits_no_repo"):
                 saved_message = self.gpt_prompts.files_content_gpt_edits_no_repo
@@ -1785,8 +1893,10 @@ class Coder:
             return
 
         if edited and self.auto_lint and self.edit_format not in ("query", "selection"):
+            _log.debug("[post-process] auto-lint starting")
             lint_errors = self.lint_edited(edited)
             self.auto_commit(edited, context="Ran the linter")
+            _log.debug("[post-process] auto-lint done  errors=%s", bool(lint_errors))
             self.lint_outcome = not lint_errors
             if lint_errors:
                 ok = self.io.confirm_ask("Attempt to fix lint errors?")

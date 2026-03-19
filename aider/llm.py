@@ -36,6 +36,11 @@ class LazyLiteLLM:
 
         self._lazy_module = importlib.import_module("litellm")
 
+        # Always suppress litellm's own verbose logging — it produces a
+        # firehose of internal noise (cost calculator retries, model_info
+        # lookups, etc.) that drowns out useful information.  We install
+        # our own litellm callbacks in the worker (_install_llm_logging)
+        # that capture the useful info (model, tokens, latency, errors).
         self._lazy_module.suppress_debug_info = True
         self._lazy_module.set_verbose = False
         self._lazy_module.drop_params = True

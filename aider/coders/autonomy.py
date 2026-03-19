@@ -39,8 +39,32 @@ class ComposeStrategy(AutonomyStrategy):
         if not content or not content.strip():
             return True  # nothing to do, but skip apply_updates
 
-        if not coder.auto_accept_architect and not coder.io.confirm_ask("Edit the files?"):
-            return True  # user declined, skip apply_updates
+        # Signal that planning is done (for UI phase transitions)
+        if hasattr(coder.io, "compose_phase"):
+            coder.io.compose_phase("planning_done")
+
+        if not coder.auto_accept_architect:
+            confirm_plan = getattr(coder.io, "confirm_plan", None)
+            if confirm_plan:
+                result = confirm_plan("Implement this plan?")
+                action = result.get("action", "proceed")
+                if action == "stop":
+                    coder.io.tool_output("Plan cancelled.")
+                    return True
+                if action == "refine":
+                    refinement = result.get("text", "").strip()
+                    coder.reflected_message = (
+                        f"The user wants you to revise the plan:\n\n{refinement}"
+                        if refinement
+                        else "The user wants you to revise the plan. Please try again."
+                    )
+                    return True
+            elif not coder.io.confirm_ask("Edit the files?"):
+                return True  # user declined, skip apply_updates
+
+        # Signal that editing is starting
+        if hasattr(coder.io, "compose_phase"):
+            coder.io.compose_phase("editing_start")
 
         # Determine the edit format for the editor phase.  The phase-2
         # coder should match the base edit mode:
@@ -79,6 +103,11 @@ class ComposeStrategy(AutonomyStrategy):
         new_kwargs.update(kwargs)
 
         editor_coder = Coder.create(**new_kwargs)
+
+        # Disable auto-context on the editor coder — context was already
+        # gathered during the planning phase and carries over via from_coder.
+        editor_coder._auto_context_enabled = False
+
         editor_coder.cur_messages = []
         editor_coder.done_messages = []
 
@@ -134,9 +163,24 @@ class AgentStrategy(AutonomyStrategy):
 
         runner.show_plan(plan)
 
-        if not coder.io.confirm_ask("Execute this plan?"):
+        confirm_plan = getattr(coder.io, "confirm_plan", None)
+        if confirm_plan:
+            result = confirm_plan("Execute this plan?")
+            action = result.get("action", "proceed")
+            if action == "stop":
+                coder.io.tool_output("Plan cancelled.")
+                return True
+            if action == "refine":
+                refinement = result.get("text", "").strip()
+                coder.reflected_message = (
+                    f"The user wants you to revise the plan:\n\n{refinement}"
+                    if refinement
+                    else "The user wants you to revise the plan. Please try again."
+                )
+                return True
+        elif not coder.io.confirm_ask("Execute this plan?"):
             coder.io.tool_output("Plan cancelled.")
-            return True  # user declined, skip apply_updates
+            return True
 
         runner.execute(plan)
         return True

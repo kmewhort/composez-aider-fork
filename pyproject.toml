@@ -37,7 +37,13 @@ playwright = { file = "requirements/requirements-playwright.txt" }
 include-package-data = true
 
 [tool.setuptools.packages.find]
-include = ["aider"]
+include = ["aider", "aider.*"]
+
+[tool.setuptools.package-data]
+# Explicit data files so builds without .git (e.g. Docker) still include them
+"aider.resources" = ["*.yml", "*.json"]
+"aider.queries" = ["*.scm"]
+"aider.website" = ["**/*"]
 
 [build-system]
 requires = ["setuptools>=68", "setuptools_scm[toml]>=8"]

@@ -408,7 +408,43 @@ class Commands:
         matching_commands = [cmd for cmd in all_commands if cmd.startswith(first_word)]
         return matching_commands, first_word, rest_inp
 
+    @staticmethod
+    def _parse_redirect(text):
+        """Split *text* into ``(command_text, redirect_path, append)`` or
+        ``(text, None, False)`` if no redirect.
+
+        Recognises ``>> path`` (append) and ``> path`` (overwrite) at the
+        end of the command.  The redirect operator must be preceded by a
+        space so it isn't confused with other uses of ``>``.
+        """
+        # Match the last " >> path" or " > path" in the string.
+        # Use a greedy .* prefix so the regex engine consumes as much
+        # as possible, leaving only the final redirect operator.
+        m = re.search(r"^(.*)\s(>>?)\s+(\S.*)$", text)
+        if m:
+            cmd_text = m.group(1)
+            append = m.group(2) == ">>"
+            redir_path = m.group(3).strip()
+            return cmd_text, redir_path, append
+        return text, None, False
+
     def run(self, inp):
+        # Parse output redirection before dispatch
+        inp, redir_path, redir_append = self._parse_redirect(inp)
+        if redir_path:
+            # Resolve relative to repo root
+            if not os.path.isabs(redir_path):
+                root = getattr(self.coder, "root", None) or "."
+                redir_path = os.path.join(root, redir_path)
+            self.io.start_tee(redir_path, append=redir_append)
+
+        try:
+            return self._run_command(inp)
+        finally:
+            if redir_path:
+                self.io.stop_tee()
+
+    def _run_command(self, inp):
         if inp.startswith("!"):
             self.coder.event("command_run")
             return self.do_run("run", inp[1:])
@@ -964,7 +1000,7 @@ class Commands:
                 continue
 
             if abs_file_path in self.coder.abs_fnames:
-                self.io.tool_error(f"{matched_file} is already in the chat as an editable file")
+                self.io.tool_warning(f"{matched_file} is already in the chat as an editable file")
                 continue
             elif abs_file_path in self.coder.abs_read_only_fnames:
                 # Determine if file can be promoted to editable
@@ -1435,7 +1471,7 @@ class Commands:
             return
 
         if abs_path in self.coder.abs_read_only_fnames:
-            self.io.tool_error(f"{original_name} is already in the chat as a read-only file")
+            self.io.tool_warning(f"{original_name} is already in the chat as a read-only file")
             return
         elif abs_path in self.coder.abs_fnames:
             self.coder.abs_fnames.remove(abs_path)

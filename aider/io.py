@@ -267,6 +267,7 @@ class InputOutput:
         self.placeholder = None
         self.interrupted = False
         self.never_prompts = set()
+        self._tee_file = None  # Output redirection target (file handle)
         self.editingmode = editingmode
         self.multiline_mode = multiline_mode
         self.bell_on_next_input = False
@@ -964,6 +965,43 @@ class InputOutput:
 
         return res
 
+    # ------------------------------------------------------------------
+    # Output redirection (tee to file)
+    # ------------------------------------------------------------------
+
+    def start_tee(self, path, append=False):
+        """Begin teeing all command output to *path*.
+
+        The file is opened in append (``>>``) or truncate (``>``) mode.
+        Output continues to the console as normal.
+        """
+        self.stop_tee()  # close any previous tee
+        mode = "a" if append else "w"
+        try:
+            os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+            self._tee_file = open(path, mode, encoding=self.encoding)
+        except OSError as exc:
+            self.tool_error(f"Cannot open redirect file: {exc}")
+            self._tee_file = None
+
+    def stop_tee(self):
+        """Stop teeing and close the redirect file."""
+        if self._tee_file is not None:
+            try:
+                self._tee_file.close()
+            except OSError:
+                pass
+            self._tee_file = None
+
+    def _tee_write(self, text):
+        """Write *text* to the tee file if active."""
+        if self._tee_file is not None:
+            try:
+                self._tee_file.write(text)
+                self._tee_file.flush()
+            except OSError:
+                pass
+
     def _tool_message(self, message="", strip=True, color=None):
         if message.strip():
             if "\n" in message:
@@ -972,6 +1010,12 @@ class InputOutput:
             else:
                 hist = message.strip() if strip else message
                 self.append_chat_history(hist, linebreak=True, blockquote=True)
+
+        # Tee plain text to redirect file
+        if isinstance(message, Text):
+            self._tee_write(message.plain.rstrip() + "\n")
+        elif message.strip():
+            self._tee_write(message.rstrip() + "\n")
 
         if not isinstance(message, Text):
             message = Text(message)
@@ -1007,6 +1051,8 @@ class InputOutput:
             hist = " ".join(messages)
             hist = f"{hist.strip()}"
             self.append_chat_history(hist, linebreak=True, blockquote=True)
+            # Tee plain text to redirect file
+            self._tee_write(hist + "\n")
 
         if log_only:
             return
@@ -1034,6 +1080,9 @@ class InputOutput:
         if not message:
             self.tool_warning("Empty response received from LLM. Check your provider account?")
             return
+
+        # Tee the raw LLM response text to redirect file
+        self._tee_write(message.rstrip() + "\n")
 
         show_resp = message
 

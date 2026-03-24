@@ -20,6 +20,7 @@ class AgentCoder(QueryCoder):
             return
 
         runner = AgentRunner(self)
+        self._agent_runner = runner  # expose for pause/resume
         plan = runner.parse_plan(content)
         if plan is None:
             # Ask the model to retry with a proper YAML plan

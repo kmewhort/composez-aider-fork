@@ -147,6 +147,7 @@ class AgentStrategy(AutonomyStrategy):
             return True  # can't proceed, skip apply_updates
 
         runner = AgentRunner(coder)
+        coder._agent_runner = runner  # expose for pause/resume
         plan = runner.parse_plan(content)
         if plan is None:
             # Ask the model to retry — reflected_message triggers a new

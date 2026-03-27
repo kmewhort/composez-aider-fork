@@ -181,7 +181,7 @@ jsonschema-specifications==2025.9.1
     # via
     #   -c requirements/common-constraints.txt
     #   jsonschema
-litellm==1.81.10
+litellm
     # via
     #   -c requirements/common-constraints.txt
     #   -r requirements/requirements.in
@@ -223,7 +223,7 @@ numpy==1.26.4
     #   -c requirements/common-constraints.txt
     #   scipy
     #   soundfile
-openai==2.20.0
+openai
     # via
     #   -c requirements/common-constraints.txt
     #   litellm

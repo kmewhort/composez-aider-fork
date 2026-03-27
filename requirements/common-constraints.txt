@@ -237,7 +237,7 @@ jsonschema-specifications==2025.9.1
     # via jsonschema
 kiwisolver==1.4.9
     # via matplotlib
-litellm==1.81.10
+litellm
     # via -r requirements/requirements.in
 llama-index-core==0.14.14
     # via llama-index-embeddings-huggingface
@@ -300,7 +300,7 @@ numpy==1.26.4
     #   soundfile
     #   streamlit
     #   transformers
-openai==2.20.0
+openai
     # via litellm
 orjson==3.11.7
     # via -r requirements/requirements.in
